@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../viewmodels/home_viewmodel.dart';
+import 'server_selection_page.dart'; // Yönlendirme için eklendi
 import 'settings_page.dart';
 import 'widgets/custom_vpn_widgets.dart';
 
@@ -114,51 +115,63 @@ class _ApexHomePageState extends State<ApexHomePage>
                     ],
                   ),
                   const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF101728),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white10),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(
-                          vm.activeServer.flag,
-                          style: const TextStyle(fontSize: 24),
+
+                  // SUNUCU KARTINA TIKLAMA ÖZELLİĞİ EKLENDİ
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ServerSelectionPage(),
                         ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                vm.activeServer.country,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${vm.activeServer.city} • UDP ${vm.activeServer.port}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF101728),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            vm.activeServer.flag,
+                            style: const TextStyle(fontSize: 24),
                           ),
-                        ),
-                        const Icon(
-                          Icons.verified_user_rounded,
-                          color: neon,
-                          size: 18,
-                        ),
-                      ],
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  vm.activeServer.country,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${vm.activeServer.city} • UDP ${vm.activeServer.port}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: Colors.white38,
+                            size: 16,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const Spacer(),
@@ -184,7 +197,18 @@ class _ApexHomePageState extends State<ApexHomePage>
                       GestureDetector(
                         onTap: vm.isConnecting
                             ? null
-                            : () => vm.toggleVPN(context),
+                            : () async {
+                                // HATALARI YAKALAMA MANTIĞI EKLENDİ
+                                final error = await vm.toggleVPN();
+                                if (error != null && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: Colors.redAccent,
+                                      content: Text('Bağlantı Hatası: $error'),
+                                    ),
+                                  );
+                                }
+                              },
                         child: Container(
                           width: 155,
                           height: 155,

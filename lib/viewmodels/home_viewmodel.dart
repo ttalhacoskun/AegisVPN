@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:wireguard_flutter/wireguard_flutter.dart';
 
+import '../models/server_list.dart';
 import '../models/server_location.dart';
 import '../services/settings_service.dart';
 import '../services/vpn_service.dart';
@@ -27,22 +28,13 @@ class HomeViewModel extends ChangeNotifier {
   int actualBlockedAds = 0;
 
   Timer? _sessionTimer;
+  StreamSubscription<VpnStage>? _vpnSubscription;
 
   HomeViewModel({VpnService? vpnService, SettingsService? settingsService})
     : _vpnService = vpnService ?? VpnService(),
       _settingsService = settingsService ?? SettingsService() {
-    activeServer = const ServerLocation(
-      id: 'oracle_fra',
-      country: 'Almanya',
-      city: 'Frankfurt • Oracle OCI',
-      flag: '🇩🇪',
-      latencyMs: 24,
-      ip: '130.61.60.46',
-      port: 64492,
-      serverPublicKey: 'qhu/0QyYi8boeYNvaRgLdZ2Piz7aJl0tFtzeAsKoRWk=',
-      presharedKey: 'RkD9UELHxmC/1eS96co6MTbo/TTJ3pT6t7461GNSUpI=',
-      clientAddress: '10.66.66.2/32',
-    );
+    // Varsayılan sunucuyu listemizden alıyoruz
+    activeServer = ServerList.allServers.first;
     currentPing = activeServer.latencyMs;
     _initVpn();
   }
@@ -50,7 +42,7 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> _initVpn() async {
     try {
       await _vpnService.initialize();
-      _vpnService.vpnStageStream.listen((stage) {
+      _vpnSubscription = _vpnService.vpnStageStream.listen((stage) {
         if (stage == VpnStage.connected) {
           isConnected = true;
           isConnecting = false;
@@ -70,8 +62,16 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> toggleVPN(BuildContext context) async {
-    if (isConnecting) return;
+  // Kullanıcı farklı sunucu seçtiğinde çalışacak
+  void changeServer(ServerLocation newServer) {
+    activeServer = newServer;
+    currentPing = newServer.latencyMs;
+    notifyListeners();
+  }
+
+  // Sadece mantığı işler, BuildContext (UI) burada olmaz. Hata varsa string döndürür.
+  Future<String?> toggleVPN() async {
+    if (isConnecting) return null;
 
     isConnecting = true;
     notifyListeners();
@@ -79,34 +79,25 @@ class HomeViewModel extends ChangeNotifier {
     try {
       if (isConnected) {
         await _vpnService.stopVpn();
+        return null;
       } else {
-        // Config dosyasını ayarlar sayfasındaki tercihlere göre oluşturuyoruz
         final config = await _buildQuickConfig();
         await _vpnService.startVpn(
           '${activeServer.ip}:${activeServer.port}',
           config,
         );
+        return null;
       }
     } catch (e) {
       debugPrint('VPN hatası: $e');
       isConnecting = false;
       isConnected = false;
       notifyListeners();
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Bağlantı Hatası: $e'),
-          ),
-        );
-      }
+      return e.toString();
     }
   }
 
-  // --- BURASI AYARLARIN GERÇEKTEN ÇALIŞTIĞI YER ---
   Future<String> _buildQuickConfig() async {
-    // 1. Ayarları Hafızadan Çek
     final dns = await _settingsService.getDns();
     final mtu = await _settingsService.getMtu();
     final keepalive = await _settingsService.getKeepalive();
@@ -114,21 +105,14 @@ class HomeViewModel extends ChangeNotifier {
     final bypassStreaming = await _settingsService.getStreamingBypass();
     final isDebug = await _settingsService.getDebugMode();
 
-    // 2. LAN Bypass Mantığı (AllowedIPs Manipülasyonu)
-    // 0.0.0.0/0 demek tüm interneti VPN'e yönlendir demek.
-    // 0.0.0.0/1, 128.0.0.0/1 ise yerel IP'leri (192.168.x.x) serbest bırakır.
-    String allowedIPs = allowLan
-        ? '0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1'
-        : '0.0.0.0/0, ::/0';
+    // IPv6'yı tamamen kapatıp sadece IPv4 trafiğini tünele yönlendiriyoruz
+    String allowedIPs = allowLan ? '0.0.0.0/1, 128.0.0.0/1' : '0.0.0.0/0';
 
-    // 3. Bölünmüş Tünelleme (Streaming Bypass)
-    // WireGuard Android çekirdeğinde bazı uygulamaları tünel dışına itebiliriz.
     String excludedAppsConfig = '';
     if (bypassStreaming) {
       excludedAppsConfig = 'ExcludedApplications = com.netflix.mediaclient, com.disney.disneyplus, com.amazon.avod.thirdpartyclient';
     }
 
-    // 4. Geliştirici Logları
     if (isDebug) {
       debugPrint('====================================');
       debugPrint('🛠️ VPN BAĞLANTISI BAŞLATILIYOR 🛠️');
@@ -140,10 +124,9 @@ class HomeViewModel extends ChangeNotifier {
       debugPrint('====================================');
     }
 
-    const clientPrivateKey = 'sADIqWrLDEbDpXgmOp0Cp0gjxkyp7BTHlkzkFgg12HM=';
+    // Seçili olan aktif sunucunun kendi gizli anahtarını dinamik olarak çekiyoruz
+    final clientPrivateKey = activeServer.clientPrivateKey;
 
-    // 5. WireGuard Config (wg0.conf) Yapısını Oluştur
-    // Config string'inde boşluklar ve satır atlamaları hassastır, bu yapı standarttır.
     return '''
 [Interface]
 PrivateKey = $clientPrivateKey
@@ -166,29 +149,51 @@ PersistentKeepalive = $keepalive
     totalRxBytes = 0.0;
     totalTxBytes = 0.0;
     actualBlockedAds = 0;
+    downSpeed = 0.0;
+    upSpeed = 0.0;
 
     final dns = await _settingsService.getDns();
+    // Eğer seçili DNS AdGuard veya Quad9 ise reklam engelleme simülasyonu çalışır
     final hasAdBlockingDns = dns.contains('94.140') || dns.contains('9.9.9.9');
 
     _sessionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       secondsElapsed++;
 
-      final rxChunk =
-          (350000 +
-                  (secondsElapsed % 7) * 95000 +
-                  (secondsElapsed % 3 == 0 ? 850000 : 0))
-              .toDouble();
-      final txChunk = (85000 + (secondsElapsed % 4) * 22000).toDouble();
+      // 1. Arka Plan Trafiği Simülasyonu (WhatsApp mesajı gelmesi, hava durumu güncellemesi vs.)
+      // Saniyede 3 KB - 15 KB arası çok ufak bir dalgalanma
+      double rxChunk = 3000.0 + math.Random().nextInt(12000);
+      double txChunk = 1500.0 + math.Random().nextInt(4000);
+
+      // 2. Aktif Kullanım Sıçraması (Kullanıcının Instagram'da kaydırması veya site açması)
+      // Her 4 ile 8 saniyede bir rastgele gerçekleşir
+      if (secondsElapsed % (4 + math.Random().nextInt(5)) == 0) {
+        rxChunk +=
+            250000.0 +
+            math.Random().nextInt(
+              900000,
+            ); // 250 KB ile 1.1 MB arası ani indirme
+        txChunk +=
+            40000.0 +
+            math.Random().nextInt(80000); // 40 KB - 120 KB arası ani yükleme
+
+        // Kullanıcı yeni bir site açtığında (veri sıçradığında) reklam da engellenmiş olur
+        if (hasAdBlockingDns) {
+          actualBlockedAds +=
+              (1 +
+              math.Random().nextInt(3)); // 1 ile 3 adet arası reklam engellendi
+        }
+      }
 
       totalRxBytes += rxChunk;
       totalTxBytes += txChunk;
+
+      // Hızları MB/s cinsine çevir
       downSpeed = (rxChunk / 1024 / 1024);
       upSpeed = (txChunk / 1024 / 1024);
-      currentPing = activeServer.latencyMs + (secondsElapsed % 3);
 
-      if (hasAdBlockingDns && secondsElapsed % 3 == 0) {
-        actualBlockedAds += (1 + math.Random().nextInt(3));
-      }
+      // Ping dalgalanması (+- 1 ms)
+      currentPing = activeServer.latencyMs + (secondsElapsed % 3 == 0 ? 1 : 0);
+
       notifyListeners();
     });
   }
@@ -198,6 +203,9 @@ PersistentKeepalive = $keepalive
     secondsElapsed = 0;
     downSpeed = 0.0;
     upSpeed = 0.0;
+    totalRxBytes = 0.0;
+    totalTxBytes = 0.0;
+    actualBlockedAds = 0;
     currentPing = activeServer.latencyMs;
     notifyListeners();
   }
@@ -222,6 +230,7 @@ PersistentKeepalive = $keepalive
   @override
   void dispose() {
     _sessionTimer?.cancel();
+    _vpnSubscription?.cancel();
     super.dispose();
   }
 }

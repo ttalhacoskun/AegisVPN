@@ -9,8 +9,10 @@ class ServerLocation {
   final String serverPublicKey;
   final String presharedKey;
   final String clientAddress;
+  final String clientPrivateKey; // 👈 YENİ EKLENEN ALAN
+  final bool isMaintenance;
 
-  const ServerLocation({
+  ServerLocation({
     required this.id,
     required this.country,
     required this.city,
@@ -21,5 +23,7 @@ class ServerLocation {
     required this.serverPublicKey,
     required this.presharedKey,
     required this.clientAddress,
+    required this.clientPrivateKey, // 👈 YENİ EKLENEN ALAN
+    this.isMaintenance = false,
   });
 }
